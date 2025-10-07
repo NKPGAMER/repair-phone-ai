@@ -31,8 +31,8 @@ def root():
 @app.post("/analyze")
 def analyze_log(req: LogRequest):
     try:
-        prompt = f"Phân tích log sau và gợi ý hướng sửa chữa iPhone:\n\n{req.panic_log}"
-        response = model.generate_content(prompt)
-        return {"answer": response.text}
+        # prompt = f"Phân tích log sau và gợi ý hướng sửa chữa iPhone:\n\n{req.panic_log}"
+        # response = model.generate_content(prompt)
+        return {"answer": os.getenv("GEMINI_API_KEY")}
     except Exception as e:
         return {"error": f"Lỗi khi gọi Gemini API: {e}"}
