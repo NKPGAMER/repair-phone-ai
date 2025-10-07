@@ -1,145 +1,179 @@
 import os
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import google.generativeai as genai
-from typing import Dict, List, Optional
-from dataclasses import dataclass
-import json
+from typing import Optional, List
+import uvicorn
 
-@dataclass
-class ChatMessage:
-    """Lớp đại diện cho một tin nhắn trong cuộc trò chuyện"""
-    role: str  # 'user' hoặc 'model'
-    content: str
+# Khởi tạo FastAPI app
+app = FastAPI(
+    title="Phone Repair AI API",
+    description="API để chẩn đoán và hỗ trợ sửa chữa điện thoại",
+    version="1.0.0"
+)
 
-class PhoneRepairAssistant:
-    """
-    Backend để hỗ trợ sửa chữa điện thoại sử dụng Gemini API
-    """
+# Cấu hình CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Cho phép tất cả origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Model cho request
+class AnalyzeRequest(BaseModel):
+    panic_log: str
     
-    def __init__(self):
-        """Khởi tạo kết nối với Gemini API"""
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY không được tìm thấy trong biến môi trường")
-        
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
-        self.chat_history: List[ChatMessage] = []
-        self.system_prompt = self._create_system_prompt()
-        
-    def _create_system_prompt(self) -> str:
-        """Tạo system prompt để huấn luyện mô hình"""
-        return """Bạn là trợ lý AI chuyên nghiệp về sửa chữa điện thoại di động. 
-        
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[List[dict]] = []
+
+# Khởi tạo Gemini
+def initialize_gemini():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY không được tìm thấy trong biến môi trường")
+    genai.configure(api_key=api_key)
+    return genai.GenerativeModel('gemini-pro')
+
+# System prompt cho phone repair
+SYSTEM_PROMPT = """Bạn là trợ lý AI chuyên nghiệp về sửa chữa điện thoại di động. 
+
 Nhiệm vụ của bạn:
-1. Chẩn đoán các vấn đề về phần cứng và phần mềm của điện thoại
-2. Hướng dẫn chi tiết cách khắc phục sự cố
-3. Tư vấn về linh kiện thay thế và giá cả ước tính
-4. Cung cấp các mẹo bảo dưỡng và chăm sóc điện thoại
-5. Giải thích các vấn đề kỹ thuật một cách dễ hiểu
+1. Phân tích panic log, crash log, logcat để tìm nguyên nhân lỗi
+2. Chẩn đoán các vấn đề về phần cứng và phần mềm của điện thoại
+3. Hướng dẫn chi tiết cách khắc phục sự cố
+4. Tư vấn về linh kiện thay thế và giá cả ước tính
+5. Cung cấp các mẹo bảo dưỡng và chăm sóc điện thoại
+6. Giải thích các vấn đề kỹ thuật một cách dễ hiểu
 
 Nguyên tắc:
-- Luôn hỏi thông tin cụ thể về triệu chứng trước khi chẩn đoán
+- Phân tích kỹ lưỡng log để tìm lỗi chính xác
+- Giải thích các mã lỗi, exception, stack trace một cách rõ ràng
 - Đưa ra giải pháp từ đơn giản đến phức tạp
 - Cảnh báo rõ ràng về rủi ro khi tự sửa chữa
 - Khuyên người dùng đến trung tâm bảo hành nếu cần thiết
-- Trả lời bằng tiếng Việt một cách thân thiện và chuyên nghiệp"""
+- Trả lời bằng tiếng Việt một cách thân thiện và chuyên nghiệp
 
-    def send_message(self, user_message: str) -> str:
-        """
-        Gửi tin nhắn và nhận phản hồi từ Gemini
-        
-        Args:
-            user_message: Tin nhắn từ người dùng
-            
-        Returns:
-            Phản hồi từ mô hình Gemini
-        """
-        try:
-            # Thêm tin nhắn người dùng vào lịch sử
-            self.chat_history.append(ChatMessage(role="user", content=user_message))
-            
-            # Tạo context với system prompt và lịch sử chat
-            full_context = self._build_context()
-            
-            # Gửi yêu cầu đến Gemini
-            response = self.model.generate_content(full_context)
-            
-            # Lấy phản hồi
-            bot_response = response.text
-            
-            # Lưu phản hồi vào lịch sử
-            self.chat_history.append(ChatMessage(role="model", content=bot_response))
-            
-            return bot_response
-            
-        except Exception as e:
-            error_msg = f"Lỗi khi gọi Gemini API: {str(e)}"
-            print(error_msg)
-            return "Xin lỗi, đã có lỗi xảy ra. Vui lòng thử lại sau."
+Khi phân tích log, hãy chú ý:
+- Exception và Error messages
+- Stack traces
+- Memory leaks
+- Kernel panic
+- Hardware failures
+- App crashes
+"""
+
+# Global model instance
+model = None
+
+@app.on_event("startup")
+async def startup_event():
+    global model
+    try:
+        model = initialize_gemini()
+        print("✅ Gemini API initialized successfully")
+    except Exception as e:
+        print(f"❌ Error initializing Gemini: {str(e)}")
+
+@app.get("/")
+async def root():
+    return {
+        "message": "Phone Repair AI API",
+        "version": "1.0.0",
+        "endpoints": {
+            "/analyze": "POST - Phân tích panic log/crash log",
+            "/chat": "POST - Chat với AI assistant",
+            "/health": "GET - Kiểm tra trạng thái API"
+        }
+    }
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "gemini_initialized": model is not None
+    }
+
+@app.post("/analyze")
+async def analyze_phone_issue(request: AnalyzeRequest):
+    """
+    Phân tích panic log, crash log, logcat để chẩn đoán vấn đề điện thoại
+    """
+    if not model:
+        raise HTTPException(status_code=503, detail="Gemini API chưa được khởi tạo")
     
-    def _build_context(self) -> str:
-        """Xây dựng context đầy đủ cho mô hình"""
-        context_parts = [self.system_prompt, "\n\nLịch sử trò chuyện:"]
-        
-        # Chỉ lấy 10 tin nhắn gần nhất để tránh vượt quá giới hạn token
-        recent_history = self.chat_history[-10:]
-        
-        for msg in recent_history:
-            prefix = "Người dùng" if msg.role == "user" else "Trợ lý"
-            context_parts.append(f"{prefix}: {msg.content}")
-        
-        return "\n".join(context_parts)
+    if not request.panic_log or not request.panic_log.strip():
+        raise HTTPException(status_code=400, detail="panic_log không được để trống")
     
-    def reset_conversation(self):
-        """Đặt lại cuộc trò chuyện"""
-        self.chat_history = []
-        print("Đã đặt lại cuộc trò chuyện")
+    try:
+        # Tạo prompt đầy đủ
+        full_prompt = f"""{SYSTEM_PROMPT}
+
+Người dùng gửi thông tin sau để chẩn đoán:
+
+{request.panic_log}
+
+Hãy phân tích kỹ lưỡng và đưa ra:
+1. Nguyên nhân chính xác của vấn đề
+2. Mức độ nghiêm trọng
+3. Giải pháp khắc phục chi tiết
+4. Lời khuyên phòng ngừa"""
+
+        # Gọi Gemini API
+        response = model.generate_content(full_prompt)
+        
+        return {
+            "status": "success",
+            "analysis": response.text,
+            "input_length": len(request.panic_log)
+        }
+        
+    except Exception as e:
+        print(f"Error in analyze endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Lỗi khi phân tích: {str(e)}")
+
+@app.post("/chat")
+async def chat_with_assistant(request: ChatRequest):
+    """
+    Chat trực tiếp với AI assistant về sửa chữa điện thoại
+    """
+    if not model:
+        raise HTTPException(status_code=503, detail="Gemini API chưa được khởi tạo")
     
-    def get_chat_history(self) -> List[Dict[str, str]]:
-        """Lấy lịch sử trò chuyện"""
-        return [
-            {"role": msg.role, "content": msg.content}
-            for msg in self.chat_history
-        ]
+    if not request.message or not request.message.strip():
+        raise HTTPException(status_code=400, detail="message không được để trống")
     
-    def export_chat_history(self, filepath: str):
-        """Xuất lịch sử trò chuyện ra file JSON"""
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(self.get_chat_history(), f, ensure_ascii=False, indent=2)
-            print(f"Đã xuất lịch sử trò chuyện ra {filepath}")
-        except Exception as e:
-            print(f"Lỗi khi xuất file: {str(e)}")
+    try:
+        # Xây dựng context với lịch sử
+        context_parts = [SYSTEM_PROMPT, "\n\nCuộc trò chuyện:"]
+        
+        # Thêm lịch sử chat (tối đa 10 tin nhắn gần nhất)
+        for msg in request.history[-10:]:
+            role = "Người dùng" if msg.get("role") == "user" else "Trợ lý"
+            context_parts.append(f"{role}: {msg.get('content', '')}")
+        
+        # Thêm tin nhắn hiện tại
+        context_parts.append(f"Người dùng: {request.message}")
+        
+        full_context = "\n".join(context_parts)
+        
+        # Gọi Gemini API
+        response = model.generate_content(full_context)
+        
+        return {
+            "status": "success",
+            "response": response.text,
+            "message": request.message
+        }
+        
+    except Exception as e:
+        print(f"Error in chat endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Lỗi khi chat: {str(e)}")
 
-
-# Hàm tiện ích để sử dụng trực tiếp
-def create_assistant() -> PhoneRepairAssistant:
-    """Tạo instance của PhoneRepairAssistant"""
-    return PhoneRepairAssistant()
-
-
-# Ví dụ sử dụng
+# Để chạy local
 if __name__ == "__main__":
-    # Khởi tạo assistant
-    assistant = create_assistant()
-    
-    print("=== Trợ lý sửa chữa điện thoại ===")
-    print("Gõ 'exit' để thoát, 'reset' để bắt đầu cuộc trò chuyện mới\n")
-    
-    while True:
-        user_input = input("Bạn: ")
-        
-        if user_input.lower() == 'exit':
-            print("Tạm biệt!")
-            break
-        
-        if user_input.lower() == 'reset':
-            assistant.reset_conversation()
-            continue
-        
-        if user_input.strip() == '':
-            continue
-        
-        # Gửi tin nhắn và nhận phản hồi
-        response = assistant.send_message(user_input)
-        print(f"\nTrợ lý: {response}\n")
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
