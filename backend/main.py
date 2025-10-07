@@ -4,12 +4,9 @@ from pydantic import BaseModel
 from google import genai
 import os
 
-# --- Cấu hình Gemini ---
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
 app = FastAPI()
 
-client = genai.Client()
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Cho phép mọi domain gọi (có thể thay * bằng domain GitHub Pages của Phúc)
 app.add_middleware(
