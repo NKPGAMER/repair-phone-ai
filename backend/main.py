@@ -1,14 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from google import genai
+import google.generativeai as genai
 import os
+
+# Cấu hình API key
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Khởi tạo model (chuẩn mới)
+model = genai.GenerativeModel(model_name="gemini-1.5-flash-latest")
 
 app = FastAPI()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-# Cho phép mọi domain gọi (có thể thay * bằng domain GitHub Pages của Phúc)
+# Cho phép frontend truy cập (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,24 +28,11 @@ class LogRequest(BaseModel):
 def root():
     return {"message": "AI Backend đang hoạt động."}
 
-@app.get("/ping")
-def ping():
-    return {"status": "alive"}
-
 @app.post("/analyze")
 def analyze_log(req: LogRequest):
     try:
-        response = client.models.generate_content(
-    model="gemini-2.0-flash",
-    contents=f"""
-    Bạn là kỹ thuật viên chuyên sửa iPhone.
-    Đây là panic log cần phân tích:
-    {req.panic_log}
-
-    Hãy xác định khả năng phần cứng hoặc phần mềm bị lỗi 
-    và gợi ý kiểm tra hoặc hướng khắc phục cụ thể.
-    """
-    )
+        prompt = f"Phân tích log sau và gợi ý hướng sửa chữa iPhone:\n\n{req.panic_log}"
+        response = model.generate_content(prompt)
         return {"answer": response.text}
     except Exception as e:
-        return {"answer": f"Lỗi khi gọi Gemini API: {str(e)}"}
+        return {"error": f"Lỗi khi gọi Gemini API: {e}"}
