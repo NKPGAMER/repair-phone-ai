@@ -8,7 +8,7 @@ import os
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Khởi tạo model (chuẩn mới)
-model = genai.GenerativeModel(model_name="gemini-1.5-flash-latest")
+model = genai.GenerativeModel(model_name="gemini-2.0-pro")
 
 app = FastAPI()
 
